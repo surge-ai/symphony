@@ -15,6 +15,7 @@ defmodule SymphonyElixirWeb.Presenter do
           generated_at: generated_at,
           counts: %{
             running: length(snapshot.running),
+            running_max: max_concurrent_agents(),
             retrying: length(snapshot.retrying)
           },
           running: Enum.map(snapshot.running, &running_entry_payload/1),
@@ -180,6 +181,15 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
+
+  defp max_concurrent_agents do
+    case Config.settings!() do
+      %{agent: %{max_concurrent_agents: n}} when is_integer(n) -> n
+      _ -> 0
+    end
+  rescue
+    _ -> 0
+  end
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

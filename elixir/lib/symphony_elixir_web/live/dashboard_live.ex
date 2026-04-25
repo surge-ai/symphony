@@ -81,8 +81,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="metric-grid">
           <article class="metric-card">
             <p class="metric-label">Running</p>
-            <p class="metric-value numeric"><%= @payload.counts.running %></p>
-            <p class="metric-detail">Active issue sessions in the current runtime.</p>
+            <p class="metric-value numeric"><%= @payload.counts.running %> / <%= @payload.counts.running_max %></p>
+            <p class="metric-detail">Active issue sessions in the current runtime (max from `agent.max_concurrent_agents`).</p>
           </article>
 
           <article class="metric-card">
