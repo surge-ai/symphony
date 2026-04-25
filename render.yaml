@@ -1,0 +1,69 @@
+# Render Blueprint for Symphony Harness.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# First-time setup: see docs/render-deploy.md.
+# Auto-syncs to Render on push to main (the Blueprint has autoSync=true).
+
+services:
+  - type: web
+    name: symphony-harness
+    runtime: docker
+    dockerfilePath: .devcontainer/Dockerfile
+    dockerContext: .
+    # pro (4 GB / 2 CPU). Standard's 2 GB OOM-killed the container when all
+    # four Codex agents resumed simultaneously with accumulated turn state.
+    plan: pro
+    numInstances: 1
+    healthCheckPath: /healthz
+    dockerCommand: /render/entrypoint.sh
+
+    # Skip rebuilds for paths that don't affect the container image.
+    # `.claude/skills/` is loaded by Claude Code in this repo locally;
+    # docs/ + *.md are project-level documentation. Edits there shouldn't
+    # cycle Symphony.
+    # Docs: https://render.com/docs/monorepo-support#build-filters
+    buildFilter:
+      ignoredPaths:
+        - .claude/**
+        - docs/**
+        - "**/*.md"
+        - .gitignore
+        - LICENSE
+
+    disk:
+      name: symphony-data
+      mountPath: /data
+      # 30 GB leaves room for ~15-20 persistent workspace clones + node_modules
+      # + codex session rollouts. 10 GB filled up fast with ~10 tickets.
+      sizeGB: 30
+
+    envVars:
+      # -- Secrets: set via Render dashboard; never commit --
+      - key: LINEAR_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GH_TOKEN
+        sync: false
+      - key: VERCEL_TOKEN
+        sync: false
+      - key: CODEX_AUTH_JSON_B64
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      # Vercel Protection Bypass for Automation token. Set in the Vercel
+      # project (project settings → Deployment Protection → Protection Bypass
+      # for Automation). Codex's `vercel-preview` skill reads this when
+      # curl'ing protected preview URLs (NTHPMV-12).
+      - key: VERCEL_AUTOMATION_BYPASS_SECRET
+        sync: false
+
+      # -- Non-secret config --
+      - key: DASHBOARD_USER
+        value: admin
+      - key: TARGET_REPO_URL
+        value: https://github.com/surge-ai/nth-prediction-market-viewer.git
+      - key: TARGET_BRANCH
+        value: main
+      - key: SYMPHONY_DATA_DIR
+        value: /data

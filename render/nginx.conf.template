@@ -1,0 +1,73 @@
+# Nginx reverse proxy with basic auth in front of Symphony's Phoenix dashboard.
+# Rendered by envsubst on container boot — see render/entrypoint.sh.
+#
+# Required vars: ${PORT} (public, from Render), ${UPSTREAM_PORT} (Symphony's
+# Phoenix port, 4000).
+
+daemon off;
+# No `user` directive — nginx runs as whoever started it (the unprivileged
+# `vscode` user on Render, where `no_new_privs` prevents sudo from elevating).
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 512;
+}
+
+http {
+    access_log /dev/stdout;
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65;
+
+    # Keep every writable path under /tmp so we don't need root.
+    client_body_temp_path /tmp/nginx-client-body;
+    proxy_temp_path       /tmp/nginx-proxy;
+    fastcgi_temp_path     /tmp/nginx-fastcgi;
+    uwsgi_temp_path       /tmp/nginx-uwsgi;
+    scgi_temp_path        /tmp/nginx-scgi;
+
+    # WebSocket upgrade map — Phoenix LiveView needs this.
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    # Tell Phoenix/Bandit to emit absolute URLs with the external host, not
+    # the container's loopback. Without this, LiveView's live_redirect etc.
+    # can confuse itself on some transports.
+    server_tokens off;
+
+    server {
+        listen ${PORT} default_server;
+        listen [::]:${PORT} default_server;
+
+        auth_basic "Symphony dashboard";
+        auth_basic_user_file /tmp/htpasswd;
+
+        location / {
+            proxy_pass http://127.0.0.1:${UPSTREAM_PORT};
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Phoenix LiveView WebSocket upgrade path
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+        }
+
+        # Render's default health-check path — answer cheaply without upstream.
+        location = /healthz {
+            auth_basic off;
+            return 200 "ok\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}

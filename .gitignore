@@ -1,0 +1,16 @@
+# Local env (never commit secrets)
+.devcontainer/.env
+.devcontainer/.env.local
+.env
+.env.local
+
+# Symphony elixir build artifacts
+elixir/_build/
+elixir/deps/
+elixir/.elixir_ls/
+elixir/cover/
+elixir/erl_crash.dump
+elixir/symphony
+
+# OS junk
+.DS_Store

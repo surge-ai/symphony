@@ -1,0 +1,25 @@
+{
+  "name": "symphony-harness",
+  "build": { "dockerfile": "Dockerfile", "context": ".." },
+  "workspaceFolder": "/workspaces/symphony-harness",
+  "remoteUser": "vscode",
+  "mounts": [
+    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh-host,type=bind,readonly,consistency=cached",
+    "source=${localEnv:HOME}/code/nth-prediction-market-viewer,target=/workspaces/target,type=bind,consistency=cached"
+  ],
+  "runArgs": [
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/.env",
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/.env.local"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "appPort": [4000],
+  "forwardPorts": [4000],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "JakeBecker.elixir-ls"
+      ]
+    }
+  }
+}
