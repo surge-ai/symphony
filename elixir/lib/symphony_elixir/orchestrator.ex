@@ -110,6 +110,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
+    maybe_transition_for_main_changes()
     state = maybe_dispatch(state)
     state = schedule_tick(state, state.poll_interval_ms)
     state = %{state | poll_check_in_progress: false}
@@ -1390,6 +1391,125 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp nonneg_int(n) when is_integer(n) and n >= 0, do: n
   defp nonneg_int(_), do: 0
+
+  # ---- main-watch: re-trigger PR rebases when main moves ----
+  #
+  # On every poll cycle, see whether the target repo's `main` branch has
+  # advanced since the last time we checked. When it does, transition every
+  # ticket currently in `Human Review` to `Updating from main` so the agents
+  # pull the new base into their PR branches, resolve conflicts, and re-run
+  # the original verification. Tickets carrying the `infra` label are
+  # skipped — those don't have agent-managed PRs.
+
+  @main_sha_path System.get_env("SYMPHONY_MAIN_SHA_PATH") || "/data/symphony/main-sha.txt"
+  @human_review_state "Human Review"
+  @updating_from_main_state "Updating from main"
+  @infra_label "infra"
+
+  defp maybe_transition_for_main_changes do
+    target_dir = System.get_env("SYMPHONY_DATA_DIR", "/data") <> "/target"
+    branch = System.get_env("TARGET_BRANCH") || "main"
+
+    case fetch_remote_sha(target_dir, branch) do
+      {:ok, sha} ->
+        handle_main_sha(sha)
+
+      {:error, reason} ->
+        Logger.warning("[symphony.main-watch] ls-remote failed: #{inspect(reason)}")
+        :ok
+    end
+  rescue
+    e ->
+      Logger.warning("[symphony.main-watch] exception: #{inspect(e)}")
+      :ok
+  end
+
+  defp fetch_remote_sha(target_dir, branch) do
+    case System.cmd("git", ["ls-remote", "origin", branch],
+           cd: target_dir,
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        case String.trim(output) |> String.split(~r/\s+/, parts: 2) do
+          [sha | _] when byte_size(sha) >= 7 -> {:ok, sha}
+          _ -> {:error, {:unparseable, output}}
+        end
+
+      {output, code} ->
+        {:error, {:exit, code, output}}
+    end
+  end
+
+  defp handle_main_sha(sha) do
+    case read_stored_main_sha() do
+      nil ->
+        # First boot — record the baseline, don't transition yet.
+        write_stored_main_sha(sha)
+
+      ^sha ->
+        :ok
+
+      old ->
+        Logger.info(
+          "[symphony.main-watch] main moved #{String.slice(old, 0, 7)} -> #{String.slice(sha, 0, 7)}; transitioning Human Review issues"
+        )
+
+        transition_human_review_to_updating()
+        write_stored_main_sha(sha)
+    end
+  end
+
+  defp transition_human_review_to_updating do
+    case Tracker.fetch_issues_by_states([@human_review_state]) do
+      {:ok, issues} ->
+        Enum.each(issues, fn issue ->
+          if @infra_label in (issue.labels || []) do
+            Logger.info("[symphony.main-watch] skipping #{issue.identifier} (infra label)")
+          else
+            case Tracker.update_issue_state(issue.id, @updating_from_main_state) do
+              :ok ->
+                Logger.info(
+                  "[symphony.main-watch] #{issue.identifier} -> #{@updating_from_main_state}"
+                )
+
+              {:error, reason} ->
+                Logger.warning(
+                  "[symphony.main-watch] failed to transition #{issue.identifier}: #{inspect(reason)}"
+                )
+            end
+          end
+        end)
+
+      {:error, reason} ->
+        Logger.warning(
+          "[symphony.main-watch] failed to fetch Human Review issues: #{inspect(reason)}"
+        )
+    end
+  end
+
+  defp read_stored_main_sha do
+    case File.read(@main_sha_path) do
+      {:ok, contents} ->
+        case String.trim(contents) do
+          "" -> nil
+          sha -> sha
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp write_stored_main_sha(sha) do
+    try do
+      File.mkdir_p!(Path.dirname(@main_sha_path))
+      File.write!(@main_sha_path, sha)
+    rescue
+      e ->
+        Logger.warning("[symphony.main-watch] persist sha failed: #{inspect(e)}")
+        :ok
+    end
+  end
 
   defp extract_token_delta(running_entry, %{event: _, timestamp: _} = update) do
     running_entry = running_entry || %{}
