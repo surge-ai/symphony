@@ -21,6 +21,8 @@ defmodule SymphonyElixir.Orchestrator do
     seconds_running: 0
   }
 
+  @persist_path System.get_env("SYMPHONY_TOTALS_PATH") || "/data/symphony/totals.json"
+
   defmodule State do
     @moduledoc """
     Runtime state for the orchestrator polling loop.
@@ -60,7 +62,7 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
-      codex_totals: @empty_codex_totals,
+      codex_totals: load_persisted_totals(),
       codex_rate_limits: nil
     }
 
@@ -1317,7 +1319,9 @@ defmodule SymphonyElixir.Orchestrator do
          %{input_tokens: input, output_tokens: output, total_tokens: total} = token_delta
        )
        when is_integer(input) and is_integer(output) and is_integer(total) do
-    %{state | codex_totals: apply_token_delta(codex_totals, token_delta)}
+    new_totals = apply_token_delta(codex_totals, token_delta)
+    persist_totals(new_totals)
+    %{state | codex_totals: new_totals}
   end
 
   defp apply_codex_token_delta(state, _token_delta), do: state
@@ -1349,6 +1353,42 @@ defmodule SymphonyElixir.Orchestrator do
       seconds_running: max(0, seconds_running)
     }
   end
+
+  defp load_persisted_totals do
+    with true <- File.exists?(@persist_path),
+         {:ok, contents} <- File.read(@persist_path),
+         {:ok, decoded} when is_map(decoded) <- Jason.decode(contents) do
+      %{
+        input_tokens: nonneg_int(Map.get(decoded, "input_tokens", 0)),
+        output_tokens: nonneg_int(Map.get(decoded, "output_tokens", 0)),
+        total_tokens: nonneg_int(Map.get(decoded, "total_tokens", 0)),
+        seconds_running: nonneg_int(Map.get(decoded, "seconds_running", 0))
+      }
+    else
+      _ -> @empty_codex_totals
+    end
+  end
+
+  defp persist_totals(totals) do
+    try do
+      File.mkdir_p!(Path.dirname(@persist_path))
+      tmp = @persist_path <> ".tmp"
+      File.write!(tmp, Jason.encode!(totals))
+      File.rename!(tmp, @persist_path)
+    rescue
+      e ->
+        require Logger
+
+        Logger.warning(
+          "[symphony.totals] persist failed: #{inspect(e)} (path=#{@persist_path})"
+        )
+
+        :ok
+    end
+  end
+
+  defp nonneg_int(n) when is_integer(n) and n >= 0, do: n
+  defp nonneg_int(_), do: 0
 
   defp extract_token_delta(running_entry, %{event: _, timestamp: _} = update) do
     running_entry = running_entry || %{}
