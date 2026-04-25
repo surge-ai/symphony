@@ -10,9 +10,10 @@ services:
     runtime: docker
     dockerfilePath: .devcontainer/Dockerfile
     dockerContext: .
-    # pro (4 GB / 2 CPU). Standard's 2 GB OOM-killed the container when all
-    # four Codex agents resumed simultaneously with accumulated turn state.
-    plan: pro
+    # pro_plus (8 GB / 4 CPU). pro's 4 GB OOM-killed under 5 concurrent
+    # Codex sessions; standard (2 GB) was already OOMing at 4. If 8 GB
+    # also pegs out under load, next tier up is pro_max (16 GB).
+    plan: pro_plus
     numInstances: 1
     healthCheckPath: /healthz
     dockerCommand: /render/entrypoint.sh
