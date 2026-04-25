@@ -1394,28 +1394,36 @@ defmodule SymphonyElixir.Orchestrator do
 
   # ---- main-watch: re-trigger PR rebases when main moves ----
   #
-  # On every poll cycle, see whether the target repo's `main` branch has
-  # advanced since the last time we checked. When it does, transition every
-  # ticket currently in `Human Review` to `Updating from main` so the agents
-  # pull the new base into their PR branches, resolve conflicts, and re-run
-  # the original verification. Tickets carrying the `infra` label are
-  # skipped — those don't have agent-managed PRs.
+  # On every poll cycle, walk every ticket in `Human Review` and check whether
+  # its PR branch has fallen behind `main`. If so, transition the ticket to
+  # `Updating from main` so an agent can pull the new base in, resolve
+  # conflicts, and re-run the original verification.
+  #
+  # We deliberately do per-ticket comparison (not "main moved since last
+  # poll"). The latter has a race: if main moves twice while a ticket is
+  # being updated, the SHA-on-disk advances past the second move, and when
+  # the agent finishes its (now-also-stale) update and lands the ticket back
+  # in HR, we never re-trigger the next pass. Per-ticket compare is
+  # self-healing: a ticket that lands in HR with a stale base gets caught on
+  # the next poll regardless of how many times main moved during the update.
+  #
+  # Tickets carrying the `infra` label are skipped — those don't have
+  # agent-managed PRs to rebase.
 
-  @main_sha_path System.get_env("SYMPHONY_MAIN_SHA_PATH") || "/data/symphony/main-sha.txt"
   @human_review_state "Human Review"
   @updating_from_main_state "Updating from main"
   @infra_label "infra"
 
   defp maybe_transition_for_main_changes do
     target_dir = System.get_env("SYMPHONY_DATA_DIR", "/data") <> "/target"
-    branch = System.get_env("TARGET_BRANCH") || "main"
+    main_branch = System.get_env("TARGET_BRANCH") || "main"
 
-    case fetch_remote_sha(target_dir, branch) do
-      {:ok, sha} ->
-        handle_main_sha(sha)
+    case refresh_main_locally(target_dir, main_branch) do
+      :ok ->
+        transition_stale_human_review_tickets(target_dir, main_branch)
 
       {:error, reason} ->
-        Logger.warning("[symphony.main-watch] ls-remote failed: #{inspect(reason)}")
+        Logger.warning("[symphony.main-watch] git fetch main failed: #{inspect(reason)}")
         :ok
     end
   rescue
@@ -1424,59 +1432,32 @@ defmodule SymphonyElixir.Orchestrator do
       :ok
   end
 
-  defp fetch_remote_sha(target_dir, branch) do
-    case System.cmd("git", ["ls-remote", "origin", branch],
+  defp refresh_main_locally(target_dir, branch) do
+    case System.cmd("git", ["fetch", "--quiet", "origin", branch],
            cd: target_dir,
            stderr_to_stdout: true
          ) do
-      {output, 0} ->
-        case String.trim(output) |> String.split(~r/\s+/, parts: 2) do
-          [sha | _] when byte_size(sha) >= 7 -> {:ok, sha}
-          _ -> {:error, {:unparseable, output}}
-        end
-
-      {output, code} ->
-        {:error, {:exit, code, output}}
+      {_, 0} -> :ok
+      {output, code} -> {:error, {:exit, code, output}}
     end
   end
 
-  defp handle_main_sha(sha) do
-    case read_stored_main_sha() do
-      nil ->
-        # First boot — record the baseline, don't transition yet.
-        write_stored_main_sha(sha)
-
-      ^sha ->
-        :ok
-
-      old ->
-        Logger.info(
-          "[symphony.main-watch] main moved #{String.slice(old, 0, 7)} -> #{String.slice(sha, 0, 7)}; transitioning Human Review issues"
-        )
-
-        transition_human_review_to_updating()
-        write_stored_main_sha(sha)
-    end
-  end
-
-  defp transition_human_review_to_updating do
+  defp transition_stale_human_review_tickets(target_dir, main_branch) do
     case Tracker.fetch_issues_by_states([@human_review_state]) do
       {:ok, issues} ->
         Enum.each(issues, fn issue ->
-          if @infra_label in (issue.labels || []) do
-            Logger.info("[symphony.main-watch] skipping #{issue.identifier} (infra label)")
-          else
-            case Tracker.update_issue_state(issue.id, @updating_from_main_state) do
-              :ok ->
-                Logger.info(
-                  "[symphony.main-watch] #{issue.identifier} -> #{@updating_from_main_state}"
-                )
+          cond do
+            @infra_label in (issue.labels || []) ->
+              :ok
 
-              {:error, reason} ->
-                Logger.warning(
-                  "[symphony.main-watch] failed to transition #{issue.identifier}: #{inspect(reason)}"
-                )
-            end
+            is_nil(issue.branch_name) or issue.branch_name == "" ->
+              :ok
+
+            branch_behind_main?(target_dir, main_branch, issue.branch_name) ->
+              transition_to_updating(issue)
+
+            true ->
+              :ok
           end
         end)
 
@@ -1487,27 +1468,50 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp read_stored_main_sha do
-    case File.read(@main_sha_path) do
-      {:ok, contents} ->
-        case String.trim(contents) do
-          "" -> nil
-          sha -> sha
-        end
+  defp branch_behind_main?(target_dir, main_branch, pr_branch) do
+    # Refresh the PR branch ref. Failures (deleted branch, network) are
+    # treated as "not behind" — we don't want to spam transitions on
+    # transient errors.
+    case System.cmd("git", ["fetch", "--quiet", "origin", pr_branch],
+           cd: target_dir,
+           stderr_to_stdout: true
+         ) do
+      {_, 0} ->
+        compare_branch_to_main(target_dir, main_branch, pr_branch)
 
       _ ->
-        nil
+        false
     end
   end
 
-  defp write_stored_main_sha(sha) do
-    try do
-      File.mkdir_p!(Path.dirname(@main_sha_path))
-      File.write!(@main_sha_path, sha)
-    rescue
-      e ->
-        Logger.warning("[symphony.main-watch] persist sha failed: #{inspect(e)}")
-        :ok
+  defp compare_branch_to_main(target_dir, main_branch, pr_branch) do
+    main_ref = "origin/" <> main_branch
+    pr_ref = "origin/" <> pr_branch
+
+    with {main_head, 0} <-
+           System.cmd("git", ["rev-parse", main_ref], cd: target_dir, stderr_to_stdout: true),
+         {merge_base, 0} <-
+           System.cmd("git", ["merge-base", main_ref, pr_ref],
+             cd: target_dir,
+             stderr_to_stdout: true
+           ) do
+      String.trim(main_head) != String.trim(merge_base)
+    else
+      _ -> false
+    end
+  end
+
+  defp transition_to_updating(issue) do
+    case Tracker.update_issue_state(issue.id, @updating_from_main_state) do
+      :ok ->
+        Logger.info(
+          "[symphony.main-watch] #{issue.identifier} -> #{@updating_from_main_state} (branch behind main)"
+        )
+
+      {:error, reason} ->
+        Logger.warning(
+          "[symphony.main-watch] failed to transition #{issue.identifier}: #{inspect(reason)}"
+        )
     end
   end
 
