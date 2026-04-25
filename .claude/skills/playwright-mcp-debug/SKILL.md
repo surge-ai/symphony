@@ -47,7 +47,7 @@ Chromium on Linux has a long list of `.so` deps. If a library load fails, Playwr
 
 ## Diagnostic workflow
 
-1. Look at the boot-time `mcp-smoke-test:` line in the Render entrypoint logs. PASS means the harness can launch chromium end-to-end through the wrapper. FAIL means re-check the wrapper + chmod + system-deps in that order.
+1. Look at the boot-time `mcp-smoke-test:` line in the Render entrypoint logs. Use the `render-ops` skill: `render logs -r srv-d7legdgg4nts73ctj9lg --text "mcp-smoke-test" --limit 20 -o text`. PASS means the harness can launch chromium end-to-end through the wrapper. FAIL means re-check the wrapper + chmod + system-deps in that order.
 2. Reproduce the agent's failure locally: `docker run --rm symphony-harness:<tag>` then run the MCP as the unprivileged `vscode` user (not root — root masks the EACCES path) with `env -u PLAYWRIGHT_BROWSERS_PATH /render/playwright-mcp.sh --browser chromium` to mimic Codex's env scrub.
 3. If you see "not installed" and have reason to believe the binary IS installed (e.g. `ls /ms-playwright/chromium-*` shows it), do NOT run `install-browser`. It's a no-op for the `chrome-for-testing` channel — that channel is just a `chromiumAliases` entry mapping to the already-installed Chromium binary.
 
