@@ -1290,6 +1290,7 @@ defmodule SymphonyElixir.Orchestrator do
         }
       )
 
+    persist_totals(codex_totals)
     %{state | codex_totals: codex_totals}
   end
 
