@@ -58,6 +58,12 @@ services:
       # curl'ing protected preview URLs (NTHPMV-12).
       - key: VERCEL_AUTOMATION_BYPASS_SECRET
         sync: false
+      # Project-scoped Neon API key (purple-meadow-09996520 / neon-red-magnet).
+      # Codex's `neon-branch` skill uses it to create a per-PR DB branch at
+      # ticket kickoff and tear it down at land-time so preview deploys don't
+      # write to production data (NTHPMV-35).
+      - key: NEON_API_KEY
+        sync: false
 
       # -- Non-secret config --
       - key: DASHBOARD_USER
@@ -68,3 +74,5 @@ services:
         value: main
       - key: SYMPHONY_DATA_DIR
         value: /data
+      - key: NEON_PROJECT_ID
+        value: purple-meadow-09996520
