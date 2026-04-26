@@ -71,10 +71,7 @@ services:
       - key: TARGET_REPO_URL
         value: https://github.com/surge-ai/nth-prediction-market-viewer.git
       - key: TARGET_BRANCH
-        # TEMP: pointed at the reviewer-chain branch for end-to-end validation.
-        # Revert to "main" once reviewer-agent-states is merged. NTHPMV-60
-        # tracks the lighter iterate-on-existing-PR path follow-up.
-        value: reviewer-agent-states
+        value: main
       - key: SYMPHONY_DATA_DIR
         value: /data
       - key: NEON_PROJECT_ID
