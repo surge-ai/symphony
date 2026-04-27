@@ -8,7 +8,12 @@ description: |
 
 # Filing new Linear tickets
 
-When creating a new Linear ticket via `mcp__plugin_linear_linear__save_issue`, set `state: "Todo"` by default. Linear's API defaults new issues to Backlog, but Symphony's poll loop only claims tickets from `active_states` (Todo, In Progress, Merging, Rework). A Backlog ticket sits invisible to Symphony until a human moves it.
+When creating a new Linear ticket via `mcp__plugin_linear_linear__save_issue`, **always pass both `state: "Todo"` (or omit for Backlog) and `project: "Prediction Market Viewer"`**. Two filters can hide a ticket from Symphony's poll loop:
+
+1. **State** — Symphony only claims tickets in `active_states` (Todo, In Progress, Code Review, QA, Design Review, Merging, Rework, Updating from main). Linear's API defaults new issues to `Backlog`, which is invisible to Symphony.
+2. **Project** — Symphony's GraphQL query filters by `project.slugId = "prediction-market-viewer-d1f7126796cd"`. The MCP tool does **not** auto-assign a project. A ticket without a project is invisible to Symphony even when its state is Todo.
+
+If you forget the project, the ticket sits in Todo forever and you'll waste cycles wondering why Symphony isn't claiming it.
 
 ## When to use Todo vs Backlog
 
@@ -31,6 +36,7 @@ When creating a new Linear ticket via `mcp__plugin_linear_linear__save_issue`, s
 ```ts
 mcp__plugin_linear_linear__save_issue({
   team: "nth-prediction-market-viewer",
+  project: "Prediction Market Viewer", // REQUIRED — Symphony filters on it
   title: "...",
   state: "Todo",                  // default
   priority: 2,
@@ -38,3 +44,5 @@ mcp__plugin_linear_linear__save_issue({
   description: "...",
 })
 ```
+
+Verify before walking away: `curl ... '{"query":"query { issue(id:\"NTHPMV-N\"){ project { name } state { name } } }"}'`. Both fields must be set for Symphony to see the ticket.
