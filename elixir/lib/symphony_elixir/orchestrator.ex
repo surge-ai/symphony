@@ -1388,19 +1388,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp persist_totals(totals) do
-    try do
-      File.mkdir_p!(Path.dirname(@persist_path))
-      tmp = @persist_path <> ".tmp"
-      File.write!(tmp, Jason.encode!(totals))
-      File.rename!(tmp, @persist_path)
-    rescue
-      e ->
-        require Logger
+    File.mkdir_p!(Path.dirname(@persist_path))
+    tmp = @persist_path <> ".tmp"
+    File.write!(tmp, Jason.encode!(totals))
+    File.rename!(tmp, @persist_path)
+  rescue
+    e ->
+      require Logger
 
-        Logger.warning("[symphony.totals] persist failed: #{inspect(e)} (path=#{@persist_path})")
+      Logger.warning("[symphony.totals] persist failed: #{inspect(e)} (path=#{@persist_path})")
 
-        :ok
-    end
+      :ok
   end
 
   defp nonneg_int(n) when is_integer(n) and n >= 0, do: n
@@ -1460,24 +1458,26 @@ defmodule SymphonyElixir.Orchestrator do
   defp transition_stale_human_review_tickets(target_dir, main_branch) do
     case Tracker.fetch_issues_by_states([@human_review_state]) do
       {:ok, issues} ->
-        Enum.each(issues, fn issue ->
-          cond do
-            issue_excluded_by_label?(issue) ->
-              :ok
-
-            is_nil(issue.branch_name) or issue.branch_name == "" ->
-              :ok
-
-            branch_behind_main?(target_dir, main_branch, issue.branch_name) ->
-              transition_to_updating(issue)
-
-            true ->
-              :ok
-          end
-        end)
+        Enum.each(issues, &maybe_transition_human_review_issue(&1, target_dir, main_branch))
 
       {:error, reason} ->
         Logger.warning("[symphony.main-watch] failed to fetch Human Review issues: #{inspect(reason)}")
+    end
+  end
+
+  defp maybe_transition_human_review_issue(issue, target_dir, main_branch) do
+    cond do
+      issue_excluded_by_label?(issue) ->
+        :ok
+
+      is_nil(issue.branch_name) or issue.branch_name == "" ->
+        :ok
+
+      branch_behind_main?(target_dir, main_branch, issue.branch_name) ->
+        transition_to_updating(issue)
+
+      true ->
+        :ok
     end
   end
 
