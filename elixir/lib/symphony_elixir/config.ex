@@ -72,6 +72,14 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  @spec exclude_labels() :: [String.t()]
+  def exclude_labels do
+    case settings() do
+      {:ok, %{tracker: %{exclude_labels: labels}}} when is_list(labels) -> labels
+      _ -> []
+    end
+  end
+
   @spec workflow_prompt() :: String.t()
   def workflow_prompt do
     case Workflow.current() do
