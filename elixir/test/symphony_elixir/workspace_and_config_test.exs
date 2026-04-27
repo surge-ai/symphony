@@ -538,6 +538,70 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  # NTHPMV-51
+  test "issue with an excluded label is not dispatch-eligible" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_exclude_labels: ["infra"])
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    infra_issue = %Issue{
+      id: "infra-1",
+      identifier: "MT-2001",
+      title: "Hosted dashboard config",
+      state: "Todo",
+      labels: ["infra"]
+    }
+
+    product_issue = %Issue{
+      id: "product-1",
+      identifier: "MT-2002",
+      title: "Product UI tweak",
+      state: "Todo",
+      labels: ["frontend"]
+    }
+
+    multi_label_issue = %Issue{
+      id: "mixed-1",
+      identifier: "MT-2003",
+      title: "Has both an infra and a product label",
+      state: "Todo",
+      labels: ["frontend", "infra"]
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(infra_issue, state)
+    assert Orchestrator.should_dispatch_issue_for_test(product_issue, state)
+    refute Orchestrator.should_dispatch_issue_for_test(multi_label_issue, state)
+  end
+
+  # NTHPMV-51
+  test "exclude_labels defaults to empty so issues are dispatch-eligible regardless of labels" do
+    write_workflow_file!(Workflow.workflow_file_path())
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "labeled-1",
+      identifier: "MT-2004",
+      title: "Labeled but no exclude_labels configured",
+      state: "Todo",
+      labels: ["infra", "anything"]
+    }
+
+    assert Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
   test "todo issue with terminal blockers remains dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,

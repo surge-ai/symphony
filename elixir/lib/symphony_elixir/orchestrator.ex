@@ -604,7 +604,8 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(id) and is_binary(identifier) and is_binary(title) and is_binary(state_name) do
     issue_routable_to_worker?(issue) and
       active_issue_state?(state_name, active_states) and
-      !terminal_issue_state?(state_name, terminal_states)
+      !terminal_issue_state?(state_name, terminal_states) and
+      !issue_excluded_by_label?(issue)
   end
 
   defp candidate_issue?(_issue, _active_states, _terminal_states), do: false
@@ -614,6 +615,21 @@ defmodule SymphonyElixir.Orchestrator do
        do: assigned_to_worker
 
   defp issue_routable_to_worker?(_issue), do: true
+
+  # NTHPMV-51: tickets carrying any label in `tracker.exclude_labels` are
+  # never claimed by the agent loop. The classic case is the `infra` label —
+  # those tickets are harness/dashboard work that Codex can't act on, so
+  # claiming them just thrashes a slot and leaves a "blocked" workpad note.
+  # Filter them out at the candidate stage so concurrency, retry, and
+  # dashboard counters all see them uniformly as not-our-work.
+  defp issue_excluded_by_label?(%Issue{labels: labels}) when is_list(labels) do
+    case Config.exclude_labels() do
+      [] -> false
+      excluded -> Enum.any?(labels, &(&1 in excluded))
+    end
+  end
+
+  defp issue_excluded_by_label?(_issue), do: false
 
   defp todo_issue_blocked_by_non_terminal?(
          %Issue{state: issue_state, blocked_by: blockers},
@@ -1372,21 +1388,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp persist_totals(totals) do
-    try do
-      File.mkdir_p!(Path.dirname(@persist_path))
-      tmp = @persist_path <> ".tmp"
-      File.write!(tmp, Jason.encode!(totals))
-      File.rename!(tmp, @persist_path)
-    rescue
-      e ->
-        require Logger
+    File.mkdir_p!(Path.dirname(@persist_path))
+    tmp = @persist_path <> ".tmp"
+    File.write!(tmp, Jason.encode!(totals))
+    File.rename!(tmp, @persist_path)
+  rescue
+    e ->
+      require Logger
 
-        Logger.warning(
-          "[symphony.totals] persist failed: #{inspect(e)} (path=#{@persist_path})"
-        )
+      Logger.warning("[symphony.totals] persist failed: #{inspect(e)} (path=#{@persist_path})")
 
-        :ok
-    end
+      :ok
   end
 
   defp nonneg_int(n) when is_integer(n) and n >= 0, do: n
@@ -1407,12 +1419,13 @@ defmodule SymphonyElixir.Orchestrator do
   # self-healing: a ticket that lands in HR with a stale base gets caught on
   # the next poll regardless of how many times main moved during the update.
   #
-  # Tickets carrying the `infra` label are skipped — those don't have
-  # agent-managed PRs to rebase.
+  # Tickets carrying any label in `tracker.exclude_labels` are skipped —
+  # those are not agent-owned (no PR to rebase, harness work the agent
+  # can't act on, etc.). NTHPMV-51 made this config-driven; previously
+  # the `infra` label was hardcoded here.
 
   @human_review_state "Human Review"
   @updating_from_main_state "Updating from main"
-  @infra_label "infra"
 
   defp maybe_transition_for_main_changes do
     target_dir = System.get_env("SYMPHONY_DATA_DIR", "/data") <> "/target"
@@ -1445,26 +1458,26 @@ defmodule SymphonyElixir.Orchestrator do
   defp transition_stale_human_review_tickets(target_dir, main_branch) do
     case Tracker.fetch_issues_by_states([@human_review_state]) do
       {:ok, issues} ->
-        Enum.each(issues, fn issue ->
-          cond do
-            @infra_label in (issue.labels || []) ->
-              :ok
-
-            is_nil(issue.branch_name) or issue.branch_name == "" ->
-              :ok
-
-            branch_behind_main?(target_dir, main_branch, issue.branch_name) ->
-              transition_to_updating(issue)
-
-            true ->
-              :ok
-          end
-        end)
+        Enum.each(issues, &maybe_transition_human_review_issue(&1, target_dir, main_branch))
 
       {:error, reason} ->
-        Logger.warning(
-          "[symphony.main-watch] failed to fetch Human Review issues: #{inspect(reason)}"
-        )
+        Logger.warning("[symphony.main-watch] failed to fetch Human Review issues: #{inspect(reason)}")
+    end
+  end
+
+  defp maybe_transition_human_review_issue(issue, target_dir, main_branch) do
+    cond do
+      issue_excluded_by_label?(issue) ->
+        :ok
+
+      is_nil(issue.branch_name) or issue.branch_name == "" ->
+        :ok
+
+      branch_behind_main?(target_dir, main_branch, issue.branch_name) ->
+        transition_to_updating(issue)
+
+      true ->
+        :ok
     end
   end
 
@@ -1504,14 +1517,10 @@ defmodule SymphonyElixir.Orchestrator do
   defp transition_to_updating(issue) do
     case Tracker.update_issue_state(issue.id, @updating_from_main_state) do
       :ok ->
-        Logger.info(
-          "[symphony.main-watch] #{issue.identifier} -> #{@updating_from_main_state} (branch behind main)"
-        )
+        Logger.info("[symphony.main-watch] #{issue.identifier} -> #{@updating_from_main_state} (branch behind main)")
 
       {:error, reason} ->
-        Logger.warning(
-          "[symphony.main-watch] failed to transition #{issue.identifier}: #{inspect(reason)}"
-        )
+        Logger.warning("[symphony.main-watch] failed to transition #{issue.identifier}: #{inspect(reason)}")
     end
   end
 
