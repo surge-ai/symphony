@@ -342,7 +342,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
-             "counts" => %{"running" => 1, "retrying" => 1},
+             "counts" => %{"running" => 1, "retrying" => 1, "running_max" => 10},
              "running" => [
                %{
                  "issue_id" => "issue-http",
@@ -641,7 +641,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     response = Req.get!("http://127.0.0.1:#{port}/api/v1/state")
     assert response.status == 200
-    assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
+    assert response.body["counts"] == %{"running" => 1, "retrying" => 1, "running_max" => 10}
 
     dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
     assert dashboard_css.status == 200
