@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # Entrypoint for Symphony Harness on Render.
+# (Rev 2026-05-17 — forced restart: orchestrator looked dead while nginx kept /healthz green.)
 #
 # Expects, in Render's env:
 #   - LINEAR_API_KEY, OPENAI_API_KEY, GH_TOKEN, VERCEL_TOKEN   (secrets)
