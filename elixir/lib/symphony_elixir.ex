@@ -27,16 +27,25 @@ defmodule SymphonyElixir.Application do
       {Phoenix.PubSub, name: SymphonyElixir.PubSub},
       {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
       SymphonyElixir.WorkflowStore,
+      SymphonyElixir.Datadog,
       SymphonyElixir.Orchestrator,
       SymphonyElixir.HttpServer,
       SymphonyElixir.StatusDashboard
     ]
 
-    Supervisor.start_link(
-      children,
-      strategy: :one_for_one,
-      name: SymphonyElixir.Supervisor
-    )
+    result =
+      Supervisor.start_link(
+        children,
+        strategy: :one_for_one,
+        name: SymphonyElixir.Supervisor
+      )
+
+    # Install the Datadog :logger handler after supervision is up so it can
+    # forward to the GenServer. No-op if DD_API_KEY isn't set (the GenServer
+    # returns :ignore and Process.whereis returns nil).
+    :ok = SymphonyElixir.Datadog.install_handler()
+
+    result
   end
 
   @impl true

@@ -64,6 +64,15 @@ services:
       # write to production data (NTHPMV-35).
       - key: NEON_API_KEY
         sync: false
+      # Datadog API key for log shipping. Drives SymphonyElixir.Datadog
+      # which posts to Datadog's Logs HTTP intake. All emissions are tagged
+      # with service=nickheiner-symphony / ddsource=nickheiner-symphony so
+      # they're partitionable from other entries in the shared account.
+      # When unset the GenServer init/1 returns :ignore and the :logger
+      # handler installation is a no-op, so dev/test runs ship nothing.
+      # (NTHPMV-50).
+      - key: DD_API_KEY
+        sync: false
 
       # -- Non-secret config --
       - key: DASHBOARD_USER
