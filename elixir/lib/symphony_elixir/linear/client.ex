@@ -176,10 +176,21 @@ defmodule SymphonyElixir.Linear.Client do
             linear_error_context(payload, response)
         )
 
+        # Temp diag for prod-only 400 mystery (remove after diagnosis):
+        # emit a unique-tagged stderr line that survives dashboard TUI rewrites.
+        IO.puts(
+          :stderr,
+          "LINEAR_DEBUG_400 status=#{response.status} " <>
+            "headers=#{inspect(Map.get(response, :headers, %{}))} " <>
+            "body=#{inspect(Map.get(response, :body))} " <>
+            "payload_keys=#{inspect(Map.keys(payload))}"
+        )
+
         {:error, {:linear_api_status, response.status}}
 
       {:error, reason} ->
         Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
+        IO.puts(:stderr, "LINEAR_DEBUG_REQERR reason=#{inspect(reason)}")
         {:error, {:linear_api_request, reason}}
     end
   end
