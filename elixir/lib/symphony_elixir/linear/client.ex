@@ -171,27 +171,57 @@ defmodule SymphonyElixir.Linear.Client do
       {:ok, body}
     else
       {:ok, response} ->
-        Logger.error(
-          "Linear GraphQL request failed status=#{response.status}" <>
-            linear_error_context(payload, response)
-        )
+        case rate_limit_info(response) do
+          {:rate_limited, retry_after_seconds} ->
+            Logger.warning(
+              "Linear rate-limited (retry-after=#{retry_after_seconds}s) — sleeping in-process" <>
+                linear_error_context(payload, response)
+            )
 
-        # Temp diag for prod-only 400 mystery (remove after diagnosis):
-        # emit a unique-tagged stderr line that survives dashboard TUI rewrites.
-        IO.puts(
-          :stderr,
-          "LINEAR_DEBUG_400 status=#{response.status} " <>
-            "headers=#{inspect(Map.get(response, :headers, %{}))} " <>
-            "body=#{inspect(Map.get(response, :body))} " <>
-            "payload_keys=#{inspect(Map.keys(payload))}"
-        )
+            # Hold the calling task until the rate window clears. The harness's
+            # max_concurrent_agents is small (2), so blocking here doesn't strand
+            # the orchestrator — it just spaces out retries instead of crashlooping.
+            # Cap at 1h so a wildly-large retry-after can't permanently jam.
+            sleep_ms = max(1_000, min(retry_after_seconds, 3_600) * 1_000)
+            Process.sleep(sleep_ms)
+            {:error, {:linear_rate_limited, retry_after_seconds}}
 
-        {:error, {:linear_api_status, response.status}}
+          :not_rate_limited ->
+            Logger.error(
+              "Linear GraphQL request failed status=#{response.status}" <>
+                linear_error_context(payload, response)
+            )
+
+            {:error, {:linear_api_status, response.status}}
+        end
 
       {:error, reason} ->
         Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
-        IO.puts(:stderr, "LINEAR_DEBUG_REQERR reason=#{inspect(reason)}")
         {:error, {:linear_api_request, reason}}
+    end
+  end
+
+  # Linear's GraphQL signals rate-limit with HTTP 400 + a body that nests
+  # `errors[].extensions.code == "RATELIMITED"` and `statusCode: 429`.
+  # Prefer the `retry-after` response header when present; fall back to 3600.
+  defp rate_limit_info(%{body: body} = response) do
+    with %{"errors" => errors} when is_list(errors) <- body,
+         %{"extensions" => %{"code" => "RATELIMITED"}} <- List.first(errors) do
+      retry_after =
+        case Map.get(response, :headers, %{}) |> get_in(["retry-after"]) do
+          [s | _] when is_binary(s) ->
+            case Integer.parse(s) do
+              {n, _} when n > 0 -> n
+              _ -> 3_600
+            end
+
+          _ ->
+            3_600
+        end
+
+      {:rate_limited, retry_after}
+    else
+      _ -> :not_rate_limited
     end
   end
 
