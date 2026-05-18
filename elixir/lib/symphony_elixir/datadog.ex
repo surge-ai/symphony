@@ -232,9 +232,7 @@ defmodule SymphonyElixir.Datadog do
   end
 
   defp hostname do
-    case :inet.gethostname() do
-      {:ok, host} -> List.to_string(host)
-      _ -> "unknown"
-    end
+    {:ok, host} = :inet.gethostname()
+    List.to_string(host)
   end
 end
