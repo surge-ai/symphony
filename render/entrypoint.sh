@@ -5,7 +5,9 @@
 #
 # Expects, in Render's env:
 #   - LINEAR_API_KEY, OPENAI_API_KEY, GH_TOKEN, VERCEL_TOKEN   (secrets)
-#   - CODEX_AUTH_JSON_B64      (first boot only; seeds ChatGPT Team OAuth)
+#   - CODEX_AUTH_JSON_B64      (rewrites ~/.codex/auth.json every boot; can hold
+#                                either ChatGPT Team OAuth tokens or
+#                                {"OPENAI_API_KEY": "sk-..."} for API-key auth)
 #   - TARGET_REPO_URL          (HTTPS URL of the target repo)
 #   - TARGET_BRANCH            (default: main)
 #   - SYMPHONY_DATA_DIR        (default: /data; points at persistent disk)
@@ -199,11 +201,20 @@ else
 fi
 log "======================================"
 
-# ---- 2. Seed codex auth on first boot ----------------------------------------
+# ---- 2. Codex auth (env var is canonical) ------------------------------------
+#
+# CODEX_AUTH_JSON_B64 is rewritten over $CODEX_PERSIST/auth.json on every
+# boot — same pattern as config.toml below. The env var is the single source of
+# truth so rotations (e.g. swapping ChatGPT Team OAuth for an OPENAI_API_KEY
+# after the crashloop on 2026-05-17 burned the one-time refresh token) take
+# effect on the next container restart without needing shell access to /data.
 
-if [ ! -f "$CODEX_PERSIST/auth.json" ]; then
-    if [ -z "${CODEX_AUTH_JSON_B64:-}" ]; then
-        cat >&2 <<'EOF'
+if [ -n "${CODEX_AUTH_JSON_B64:-}" ]; then
+    log "writing $CODEX_PERSIST/auth.json from CODEX_AUTH_JSON_B64 (env var is canonical)"
+    printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$CODEX_PERSIST/auth.json"
+    chmod 600 "$CODEX_PERSIST/auth.json"
+elif [ ! -f "$CODEX_PERSIST/auth.json" ]; then
+    cat >&2 <<'EOF'
 FATAL: no existing auth.json on the persistent disk and no
 CODEX_AUTH_JSON_B64 env var to seed it from.
 
@@ -211,13 +222,13 @@ Generate the seed value on your laptop:
 
     ./scripts/export-codex-auth.sh | pbcopy
 
-then paste it into Render's CODEX_AUTH_JSON_B64 secret and redeploy.
+Or for API-key auth (cheaper, no OAuth refresh dance):
+
+    printf '{"OPENAI_API_KEY":"sk-proj-..."}' | base64 | tr -d '\n'
+
+then paste into Render's CODEX_AUTH_JSON_B64 secret and redeploy.
 EOF
-        exit 1
-    fi
-    log "seeding $CODEX_PERSIST/auth.json from CODEX_AUTH_JSON_B64"
-    printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$CODEX_PERSIST/auth.json"
-    chmod 600 "$CODEX_PERSIST/auth.json"
+    exit 1
 fi
 
 # Seed a minimal Codex config.toml if the persistent disk doesn't already have
