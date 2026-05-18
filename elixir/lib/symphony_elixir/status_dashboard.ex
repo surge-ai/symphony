@@ -180,11 +180,9 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp snapshot_running_max do
-    try do
-      Config.settings!().agent.max_concurrent_agents
-    rescue
-      _ -> nil
-    end
+    Config.settings!().agent.max_concurrent_agents
+  rescue
+    _ -> nil
   end
 
   def handle_info(:refresh, %{enabled: true} = state), do: {:noreply, maybe_render(refresh_runtime_config(state))}

@@ -66,11 +66,9 @@ defmodule SymphonyElixir.Datadog do
   end
 
   defp safe_json(payload) do
-    try do
-      Jason.encode!(payload)
-    rescue
-      _ -> inspect(payload)
-    end
+    Jason.encode!(payload)
+  rescue
+    _ -> inspect(payload)
   end
 
   @doc """
@@ -216,21 +214,19 @@ defmodule SymphonyElixir.Datadog do
   end
 
   defp ship_sync(records, api_key) do
-    try do
-      Req.post(@intake_url,
-        headers: [
-          {"DD-API-KEY", api_key},
-          {"content-type", "application/json"}
-        ],
-        json: records,
-        retry: false,
-        connect_options: [timeout: @http_timeout_ms]
-      )
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
+    Req.post(@intake_url,
+      headers: [
+        {"DD-API-KEY", api_key},
+        {"content-type", "application/json"}
+      ],
+      json: records,
+      retry: false,
+      connect_options: [timeout: @http_timeout_ms]
+    )
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp schedule_flush do
