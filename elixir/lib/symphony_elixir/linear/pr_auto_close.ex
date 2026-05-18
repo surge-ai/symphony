@@ -12,12 +12,15 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
   must not retro-close a PR that has already merged.
 
   On boot, the first sweep is a no-op close-wise: we record every
-  currently-terminal issue into the seen-set so we don't retroactively
-  close PRs that were already attached to long-canceled tickets. From
-  then on, only newly-terminal issues are processed.
+  currently-terminal issue's `(id, updated_at)` into the seen-map so we
+  don't retroactively close PRs that were already attached to
+  long-canceled tickets. Keying on `updated_at` (not just id) means a
+  ticket that gets reopened to a non-terminal state and later
+  re-canceled bumps its `updated_at` and is treated as a fresh
+  cancellation — we'll close PRs attached to it then.
 
   In-memory state is fine. PRs that close once stay closed; a Symphony
-  restart re-seeds the seen-set on the next sweep, so the worst case
+  restart re-seeds the seen-map on the next sweep, so the worst case
   after a restart is "any issue canceled while Symphony was down stays
   un-acted-upon" — re-cancel or close the PR manually.
   """
@@ -46,7 +49,8 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
 
   defmodule State do
     @moduledoc false
-    defstruct seen: MapSet.new(), initialized: false
+    # seen :: %{issue_id => last_processed_updated_at}
+    defstruct seen: %{}, initialized: false
   end
 
   # ---- Public ---------------------------------------------------------------
@@ -83,10 +87,13 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
       {:ok, issues} ->
         case state do
           %State{initialized: false} ->
-            seen = MapSet.new(issues, & &1.id)
+            seen =
+              issues
+              |> Enum.filter(&is_binary(&1.id))
+              |> Map.new(fn issue -> {issue.id, issue.updated_at} end)
 
             SymphonyElixir.Datadog.event("symphony.pr_auto_close.backfill",
-              already_terminal: MapSet.size(seen)
+              already_terminal: map_size(seen)
             )
 
             %State{state | seen: seen, initialized: true}
@@ -102,15 +109,26 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
   end
 
   defp maybe_process_issue(%{id: id} = issue, %State{seen: seen} = state) when is_binary(id) do
-    if MapSet.member?(seen, id) do
-      state
-    else
-      process_issue(issue)
-      %State{state | seen: MapSet.put(seen, id)}
+    case Map.fetch(seen, id) do
+      :error ->
+        process_issue(issue)
+        %State{state | seen: Map.put(seen, id, issue.updated_at)}
+
+      {:ok, last_updated_at} ->
+        if updated_at_advanced?(issue.updated_at, last_updated_at) do
+          process_issue(issue)
+          %State{state | seen: Map.put(seen, id, issue.updated_at)}
+        else
+          state
+        end
     end
   end
 
   defp maybe_process_issue(_issue, state), do: state
+
+  defp updated_at_advanced?(%DateTime{} = a, %DateTime{} = b), do: DateTime.compare(a, b) == :gt
+  defp updated_at_advanced?(%DateTime{}, nil), do: true
+  defp updated_at_advanced?(_, _), do: false
 
   defp process_issue(issue) do
     case fetch_pr_attachments(issue.id) do
