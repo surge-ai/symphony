@@ -31,6 +31,7 @@ defmodule SymphonyElixir.Datadog do
 
   # ---- Public ---------------------------------------------------------------
 
+  @spec start_link(term()) :: GenServer.on_start()
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
@@ -65,17 +66,16 @@ defmodule SymphonyElixir.Datadog do
   end
 
   defp safe_json(payload) do
-    try do
-      Jason.encode!(payload)
-    rescue
-      _ -> inspect(payload)
-    end
+    Jason.encode!(payload)
+  rescue
+    _ -> inspect(payload)
   end
 
   @doc """
   Idempotently install the :logger handler. Skipped when DD_API_KEY is unset
   or when this GenServer didn't start (e.g. dev/test with no key).
   """
+  @spec install_handler() :: :ok
   def install_handler do
     cond do
       System.get_env("DD_API_KEY") == nil ->
@@ -91,8 +91,12 @@ defmodule SymphonyElixir.Datadog do
                level: :info,
                filter_default: :log
              }) do
-          :ok -> :ok
-          {:error, {:handler_not_added, {:already_exists, _}}} -> :ok
+          :ok ->
+            :ok
+
+          {:error, {:handler_not_added, {:already_exists, _}}} ->
+            :ok
+
           {:error, reason} ->
             Logger.warning("Datadog log handler add failed: #{inspect(reason)}")
             :ok
@@ -104,6 +108,7 @@ defmodule SymphonyElixir.Datadog do
   # The :logger handler protocol is `log/2` — we just forward to the GenServer
   # so the hot log path stays cheap and never blocks on HTTP.
 
+  @spec log(:logger.log_event(), :logger.handler_config()) :: :ok
   def log(event, _config) do
     case Process.whereis(__MODULE__) do
       pid when is_pid(pid) -> GenServer.cast(pid, {:log, event})
@@ -144,8 +149,12 @@ defmodule SymphonyElixir.Datadog do
   def handle_info(:flush, state) do
     state =
       case state.buffer do
-        [] -> state
-        records -> ship(Enum.reverse(records), state.api_key); %{state | buffer: []}
+        [] ->
+          state
+
+        records ->
+          ship(Enum.reverse(records), state.api_key)
+          %{state | buffer: []}
       end
 
     schedule_flush()
@@ -205,21 +214,17 @@ defmodule SymphonyElixir.Datadog do
   end
 
   defp ship_sync(records, api_key) do
-    try do
-      Req.post(@intake_url,
-        headers: [
-          {"DD-API-KEY", api_key},
-          {"content-type", "application/json"}
-        ],
-        json: records,
-        retry: false,
-        connect_options: [timeout: @http_timeout_ms]
-      )
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
+    Req.post(@intake_url,
+      headers: [
+        {"DD-API-KEY", api_key},
+        {"content-type", "application/json"}
+      ],
+      json: records,
+      retry: false,
+      connect_options: [timeout: @http_timeout_ms]
+    )
+  rescue
+    _ -> :ok
   end
 
   defp schedule_flush do
@@ -227,9 +232,7 @@ defmodule SymphonyElixir.Datadog do
   end
 
   defp hostname do
-    case :inet.gethostname() do
-      {:ok, host} -> List.to_string(host)
-      _ -> "unknown"
-    end
+    {:ok, host} = :inet.gethostname()
+    List.to_string(host)
   end
 end

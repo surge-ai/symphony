@@ -66,9 +66,11 @@ defmodule SymphonyElixir.AgentRunner do
   defp dd_reason_tag({:before_run_hook, _}), do: "before_run_hook"
   defp dd_reason_tag({:codex_start, _}), do: "codex_start"
   defp dd_reason_tag({:codex_turn, _}), do: "codex_turn"
+
   defp dd_reason_tag(reason) when is_tuple(reason) and tuple_size(reason) >= 1 do
     elem(reason, 0) |> to_string()
   end
+
   defp dd_reason_tag(_), do: "other"
 
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do

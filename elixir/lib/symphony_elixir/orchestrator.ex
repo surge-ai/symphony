@@ -8,7 +8,7 @@ defmodule SymphonyElixir.Orchestrator do
   import Bitwise, only: [<<<: 2]
 
   alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
-  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Linear.{Issue, PrAutoClose}
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -112,6 +112,7 @@ defmodule SymphonyElixir.Orchestrator do
     state = refresh_runtime_config(state)
     maybe_transition_for_main_changes()
     state = maybe_dispatch(state)
+    PrAutoClose.sweep()
     state = schedule_tick(state, state.poll_interval_ms)
     state = %{state | poll_check_in_progress: false}
 

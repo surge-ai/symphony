@@ -223,7 +223,6 @@ defmodule SymphonyElixir.Linear.Client do
         {:error, {:linear_api_status, code}} -> {"http_error", code}
         {:error, {:linear_rate_limited, _}} -> {"rate_limited", 429}
         {:error, {:linear_api_request, _}} -> {"network_error", 0}
-        {:error, _other} -> {"error", 0}
       end
 
     SymphonyElixir.Datadog.event("linear.api.request",
@@ -260,21 +259,23 @@ defmodule SymphonyElixir.Linear.Client do
   defp rate_limit_info(%{body: body} = response) do
     with %{"errors" => errors} when is_list(errors) <- body,
          %{"extensions" => %{"code" => "RATELIMITED"}} <- List.first(errors) do
-      retry_after =
-        case Map.get(response, :headers, %{}) |> get_in(["retry-after"]) do
-          [s | _] when is_binary(s) ->
-            case Integer.parse(s) do
-              {n, _} when n > 0 -> n
-              _ -> 3_600
-            end
-
-          _ ->
-            3_600
-        end
-
-      {:rate_limited, retry_after}
+      {:rate_limited, parse_retry_after(response)}
     else
       _ -> :not_rate_limited
+    end
+  end
+
+  defp parse_retry_after(response) do
+    case Map.get(response, :headers, %{}) |> get_in(["retry-after"]) do
+      [s | _] when is_binary(s) -> parse_retry_after_seconds(s)
+      _ -> 3_600
+    end
+  end
+
+  defp parse_retry_after_seconds(raw) do
+    case Integer.parse(raw) do
+      {n, _} when n > 0 -> n
+      _ -> 3_600
     end
   end
 
