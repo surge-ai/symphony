@@ -91,8 +91,12 @@ defmodule SymphonyElixir.Datadog do
                level: :info,
                filter_default: :log
              }) do
-          :ok -> :ok
-          {:error, {:handler_not_added, {:already_exists, _}}} -> :ok
+          :ok ->
+            :ok
+
+          {:error, {:handler_not_added, {:already_exists, _}}} ->
+            :ok
+
           {:error, reason} ->
             Logger.warning("Datadog log handler add failed: #{inspect(reason)}")
             :ok
@@ -144,8 +148,12 @@ defmodule SymphonyElixir.Datadog do
   def handle_info(:flush, state) do
     state =
       case state.buffer do
-        [] -> state
-        records -> ship(Enum.reverse(records), state.api_key); %{state | buffer: []}
+        [] ->
+          state
+
+        records ->
+          ship(Enum.reverse(records), state.api_key)
+          %{state | buffer: []}
       end
 
     schedule_flush()

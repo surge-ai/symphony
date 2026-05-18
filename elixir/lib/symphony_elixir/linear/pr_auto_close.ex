@@ -124,9 +124,7 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
         )
 
       {:error, reason} ->
-        Logger.warning(
-          "PrAutoClose: attachment lookup failed for #{issue.identifier}: #{inspect(reason)}"
-        )
+        Logger.warning("PrAutoClose: attachment lookup failed for #{issue.identifier}: #{inspect(reason)}")
 
         SymphonyElixir.Datadog.event("symphony.pr_auto_close.lookup_failed",
           issue_id: issue.id,
@@ -194,9 +192,7 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
         duration_ms: System.monotonic_time(:millisecond) - started_at
       )
 
-      Logger.info(
-        "PrAutoClose: closed PR #{owner}/#{repo}##{number} for #{identifier} (#{state_label})"
-      )
+      Logger.info("PrAutoClose: closed PR #{owner}/#{repo}##{number} for #{identifier} (#{state_label})")
     else
       {:error, reason} ->
         SymphonyElixir.Datadog.event("symphony.pr_auto_close.close_failed",
@@ -208,9 +204,7 @@ defmodule SymphonyElixir.Linear.PrAutoClose do
           reason: inspect(reason) |> String.slice(0, 200)
         )
 
-        Logger.warning(
-          "PrAutoClose: failed to close PR #{owner}/#{repo}##{number} for #{identifier}: #{inspect(reason)}"
-        )
+        Logger.warning("PrAutoClose: failed to close PR #{owner}/#{repo}##{number} for #{identifier}: #{inspect(reason)}")
     end
   end
 
