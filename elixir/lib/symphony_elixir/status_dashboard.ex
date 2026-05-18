@@ -148,8 +148,43 @@ defmodule SymphonyElixir.StatusDashboard do
   def handle_info(:tick, %{enabled: true} = state) do
     state = refresh_runtime_config(state)
     state = maybe_render(state)
+    emit_snapshot_event()
     schedule_tick(state.refresh_ms, true)
     {:noreply, state}
+  end
+
+  # Emit a periodic snapshot of orchestrator state to Datadog so we can
+  # chart agent slot utilization, retry queue depth, and token throughput
+  # over time without relying on the TUI.
+  defp emit_snapshot_event do
+    case snapshot_payload() do
+      {:ok, snapshot} ->
+        running = Map.get(snapshot, :running, []) |> length()
+        retrying = Map.get(snapshot, :retrying, []) |> length()
+        totals = Map.get(snapshot, :codex_totals, %{})
+
+        SymphonyElixir.Datadog.event("orchestrator.snapshot",
+          running: running,
+          retrying: retrying,
+          running_max: snapshot_running_max(),
+          tokens_total: Map.get(totals, :total_tokens, 0),
+          tokens_input: Map.get(totals, :input_tokens, 0),
+          tokens_output: Map.get(totals, :output_tokens, 0)
+        )
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp snapshot_running_max do
+    try do
+      Config.settings!().agent.max_concurrent_agents
+    rescue
+      _ -> nil
+    end
   end
 
   def handle_info(:refresh, %{enabled: true} = state), do: {:noreply, maybe_render(refresh_runtime_config(state))}

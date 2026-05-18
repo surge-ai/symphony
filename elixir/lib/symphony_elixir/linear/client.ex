@@ -165,39 +165,92 @@ defmodule SymphonyElixir.Linear.Client do
       when is_binary(query) and is_map(variables) and is_list(opts) do
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
     request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/2)
+    operation = Keyword.get(opts, :operation_name) || infer_operation_name(query)
+    started_at = System.monotonic_time(:millisecond)
 
-    with {:ok, headers} <- graphql_headers(),
-         {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
-      {:ok, body}
-    else
-      {:ok, response} ->
-        case rate_limit_info(response) do
-          {:rate_limited, retry_after_seconds} ->
-            Logger.warning(
-              "Linear rate-limited (retry-after=#{retry_after_seconds}s) — sleeping in-process" <>
-                linear_error_context(payload, response)
-            )
+    result =
+      with {:ok, headers} <- graphql_headers(),
+           {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
+        {:ok, body}
+      else
+        {:ok, response} ->
+          case rate_limit_info(response) do
+            {:rate_limited, retry_after_seconds} ->
+              Logger.warning(
+                "Linear rate-limited (retry-after=#{retry_after_seconds}s) — sleeping in-process" <>
+                  linear_error_context(payload, response)
+              )
 
-            # Hold the calling task until the rate window clears. The harness's
-            # max_concurrent_agents is small (2), so blocking here doesn't strand
-            # the orchestrator — it just spaces out retries instead of crashlooping.
-            # Cap at 1h so a wildly-large retry-after can't permanently jam.
-            sleep_ms = max(1_000, min(retry_after_seconds, 3_600) * 1_000)
-            Process.sleep(sleep_ms)
-            {:error, {:linear_rate_limited, retry_after_seconds}}
+              SymphonyElixir.Datadog.event("linear.api.rate_limited",
+                operation: operation,
+                retry_after_seconds: retry_after_seconds,
+                requests_remaining: header_int(response, "x-ratelimit-requests-remaining"),
+                requests_limit: header_int(response, "x-ratelimit-requests-limit")
+              )
 
-          :not_rate_limited ->
-            Logger.error(
-              "Linear GraphQL request failed status=#{response.status}" <>
-                linear_error_context(payload, response)
-            )
+              # Hold the calling task until the rate window clears. The harness's
+              # max_concurrent_agents is small (2), so blocking here doesn't strand
+              # the orchestrator — it just spaces out retries instead of crashlooping.
+              # Cap at 1h so a wildly-large retry-after can't permanently jam.
+              sleep_ms = max(1_000, min(retry_after_seconds, 3_600) * 1_000)
+              Process.sleep(sleep_ms)
+              {:error, {:linear_rate_limited, retry_after_seconds}}
 
-            {:error, {:linear_api_status, response.status}}
+            :not_rate_limited ->
+              Logger.error(
+                "Linear GraphQL request failed status=#{response.status}" <>
+                  linear_error_context(payload, response)
+              )
+
+              {:error, {:linear_api_status, response.status}}
+          end
+
+        {:error, reason} ->
+          Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
+          {:error, {:linear_api_request, reason}}
+      end
+
+    emit_request_event(result, operation, started_at)
+    result
+  end
+
+  defp emit_request_event(result, operation, started_at) do
+    duration_ms = System.monotonic_time(:millisecond) - started_at
+
+    {outcome, status} =
+      case result do
+        {:ok, _} -> {"ok", 200}
+        {:error, {:linear_api_status, code}} -> {"http_error", code}
+        {:error, {:linear_rate_limited, _}} -> {"rate_limited", 429}
+        {:error, {:linear_api_request, _}} -> {"network_error", 0}
+        {:error, _other} -> {"error", 0}
+      end
+
+    SymphonyElixir.Datadog.event("linear.api.request",
+      operation: operation,
+      outcome: outcome,
+      status: status,
+      duration_ms: duration_ms
+    )
+  end
+
+  defp infer_operation_name(query) when is_binary(query) do
+    case Regex.run(~r/^\s*(?:query|mutation)\s+(\w+)/, query) do
+      [_, name] -> name
+      _ -> "anonymous"
+    end
+  end
+
+  defp header_int(response, key) do
+    case Map.get(response, :headers, %{}) |> get_in([key]) do
+      [s | _] when is_binary(s) ->
+        case Integer.parse(s) do
+          {n, _} -> n
+          _ -> nil
         end
 
-      {:error, reason} ->
-        Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
-        {:error, {:linear_api_request, reason}}
+      _ ->
+        nil
     end
   end
 

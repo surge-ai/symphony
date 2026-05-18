@@ -36,6 +36,43 @@ defmodule SymphonyElixir.Datadog do
   end
 
   @doc """
+  Emit a structured event log that Datadog auto-parses as JSON attributes.
+
+  Use for instrumentation points where we want filterable / chartable
+  attributes (status codes, latencies, ticket IDs) in addition to the
+  free-text message:
+
+      Datadog.event("linear.api.request",
+        status: 200,
+        duration_ms: 87,
+        operation: "fetch_issue_states_by_ids"
+      )
+
+  Produces a Logger.info call with a JSON payload. Datadog parses the
+  JSON and surfaces each field as `@<key>` for queries
+  (e.g. `@event:linear.api.request @status:>=400`).
+  """
+  @spec event(String.t(), keyword() | map()) :: :ok
+  def event(name, attrs \\ []) when is_binary(name) do
+    payload =
+      attrs
+      |> Enum.into(%{})
+      |> Map.put(:event, name)
+
+    require Logger
+    Logger.info(safe_json(payload))
+    :ok
+  end
+
+  defp safe_json(payload) do
+    try do
+      Jason.encode!(payload)
+    rescue
+      _ -> inspect(payload)
+    end
+  end
+
+  @doc """
   Idempotently install the :logger handler. Skipped when DD_API_KEY is unset
   or when this GenServer didn't start (e.g. dev/test with no key).
   """

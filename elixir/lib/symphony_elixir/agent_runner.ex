@@ -16,15 +16,60 @@ defmodule SymphonyElixir.AgentRunner do
 
     Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
 
+    started_at = System.monotonic_time(:millisecond)
+
+    SymphonyElixir.Datadog.event("agent.run.start",
+      issue_id: dd_issue_id(issue),
+      issue_identifier: dd_issue_identifier(issue),
+      worker_host: worker_host_for_log(worker_host)
+    )
+
     case run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
       :ok ->
+        SymphonyElixir.Datadog.event("agent.run.completed",
+          issue_id: dd_issue_id(issue),
+          issue_identifier: dd_issue_identifier(issue),
+          duration_ms: System.monotonic_time(:millisecond) - started_at,
+          worker_host: worker_host_for_log(worker_host)
+        )
+
         :ok
 
       {:error, reason} ->
         Logger.error("Agent run failed for #{issue_context(issue)}: #{inspect(reason)}")
+
+        SymphonyElixir.Datadog.event("agent.run.failed",
+          issue_id: dd_issue_id(issue),
+          issue_identifier: dd_issue_identifier(issue),
+          duration_ms: System.monotonic_time(:millisecond) - started_at,
+          worker_host: worker_host_for_log(worker_host),
+          reason_tag: dd_reason_tag(reason),
+          reason: inspect(reason) |> String.slice(0, 500)
+        )
+
         raise RuntimeError, "Agent run failed for #{issue_context(issue)}: #{inspect(reason)}"
     end
   end
+
+  defp dd_issue_id(%Issue{id: id}), do: id
+  defp dd_issue_id(_), do: nil
+
+  defp dd_issue_identifier(%Issue{identifier: id}), do: id
+  defp dd_issue_identifier(_), do: nil
+
+  # Coarse-grained classification of agent-run failures so we can chart
+  # "% of failures attributable to X" without grepping inspected blobs.
+  defp dd_reason_tag({:issue_state_refresh_failed, {:linear_rate_limited, _}}), do: "linear_rate_limited"
+  defp dd_reason_tag({:issue_state_refresh_failed, {:linear_api_status, _}}), do: "linear_api_status"
+  defp dd_reason_tag({:issue_state_refresh_failed, _}), do: "issue_state_refresh"
+  defp dd_reason_tag({:workspace, _}), do: "workspace"
+  defp dd_reason_tag({:before_run_hook, _}), do: "before_run_hook"
+  defp dd_reason_tag({:codex_start, _}), do: "codex_start"
+  defp dd_reason_tag({:codex_turn, _}), do: "codex_turn"
+  defp dd_reason_tag(reason) when is_tuple(reason) and tuple_size(reason) >= 1 do
+    elem(reason, 0) |> to_string()
+  end
+  defp dd_reason_tag(_), do: "other"
 
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
     Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
