@@ -31,6 +31,7 @@ defmodule SymphonyElixir.Datadog do
 
   # ---- Public ---------------------------------------------------------------
 
+  @spec start_link(term()) :: GenServer.on_start()
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
@@ -76,6 +77,7 @@ defmodule SymphonyElixir.Datadog do
   Idempotently install the :logger handler. Skipped when DD_API_KEY is unset
   or when this GenServer didn't start (e.g. dev/test with no key).
   """
+  @spec install_handler() :: :ok
   def install_handler do
     cond do
       System.get_env("DD_API_KEY") == nil ->
@@ -108,6 +110,7 @@ defmodule SymphonyElixir.Datadog do
   # The :logger handler protocol is `log/2` — we just forward to the GenServer
   # so the hot log path stays cheap and never blocks on HTTP.
 
+  @spec log(:logger.log_event(), :logger.handler_config()) :: :ok
   def log(event, _config) do
     case Process.whereis(__MODULE__) do
       pid when is_pid(pid) -> GenServer.cast(pid, {:log, event})
