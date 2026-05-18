@@ -112,6 +112,7 @@ defmodule SymphonyElixir.Orchestrator do
     state = refresh_runtime_config(state)
     maybe_transition_for_main_changes()
     state = maybe_dispatch(state)
+    SymphonyElixir.Linear.PrAutoClose.sweep()
     state = schedule_tick(state, state.poll_interval_ms)
     state = %{state | poll_check_in_progress: false}
 
