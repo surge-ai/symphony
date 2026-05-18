@@ -14,7 +14,10 @@ defmodule SymphonyElixir.MixProject do
         ],
         ignore_modules: [
           SymphonyElixir.Config,
+          SymphonyElixir.Datadog,
           SymphonyElixir.Linear.Client,
+          SymphonyElixir.Linear.PrAutoClose,
+          SymphonyElixir.Linear.PrAutoClose.State,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Orchestrator,
           SymphonyElixir.Orchestrator.State,
