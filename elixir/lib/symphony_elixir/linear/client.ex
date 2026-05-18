@@ -223,7 +223,6 @@ defmodule SymphonyElixir.Linear.Client do
         {:error, {:linear_api_status, code}} -> {"http_error", code}
         {:error, {:linear_rate_limited, _}} -> {"rate_limited", 429}
         {:error, {:linear_api_request, _}} -> {"network_error", 0}
-        {:error, _other} -> {"error", 0}
       end
 
     SymphonyElixir.Datadog.event("linear.api.request",

@@ -225,8 +225,6 @@ defmodule SymphonyElixir.Datadog do
     )
   rescue
     _ -> :ok
-  catch
-    _, _ -> :ok
   end
 
   defp schedule_flush do
